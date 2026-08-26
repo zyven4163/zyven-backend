@@ -1,10 +1,9 @@
 const express = require('express');
 const cors = require('cors');
-const bodyParser = require('body-parser');
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
 // Temporary In-Memory Database
 const users = {}; // Stores user info, limits, status
@@ -15,16 +14,19 @@ const ADMIN_EMAIL = 'zyven4163@gmail.com';
 
 // 1. Send OTP Code
 app.post('/api/send-otp', (req, res) => {
-  const { email, tiktok } = req.body;
-  if (!email || !tiktok) return res.status(400).json({ error: 'Email and TikTok handle required' });
+  // Fixed: Accepts 'username' to match popup.js
+  const { email, username } = req.body;
+  if (!email || !username) {
+    return res.status(400).json({ message: 'Email and TikTok username required' });
+  }
 
   // Generate random 6-digit code
   const code = Math.floor(100000 + Math.random() * 900000).toString();
-  otpStore[email] = code;
+  otpStore[email] = { code, username };
 
-  console.log(`[OTP SENT] Email: ${email} | Code: ${code}`);
-  
-  // Note: Integrate Nodemailer here to send actual emails.
+  console.log(`[OTP SENT] Email: ${email} | Username: ${username} | Code: ${code}`);
+
+  // Note: Vercel logs will show the printed 6-digit code for testing
   res.json({ message: 'OTP sent successfully' });
 });
 
@@ -32,13 +34,16 @@ app.post('/api/send-otp', (req, res) => {
 app.post('/api/verify-otp', (req, res) => {
   const { email, code } = req.body;
 
-  if (otpStore[email] === code) {
+  if (otpStore[email] && otpStore[email].code === code) {
+    const username = otpStore[email].username;
     delete otpStore[email];
-    
+
     // Register user if new
     if (!users[email]) {
       users[email] = {
+        id: email,
         email,
+        username: username || 'User',
         dailyLimit: 5,
         usedToday: 0,
         banned: false,
@@ -49,61 +54,81 @@ app.post('/api/verify-otp', (req, res) => {
     return res.json({ success: true, user: users[email] });
   }
 
-  res.status(400).json({ error: 'Invalid verification code' });
+  res.status(400).json({ message: 'Invalid verification code' });
 });
 
-// 3. Main Tool API: Check Limits & Patch Video
-app.post('/api/patch-video', (req, res) => {
+// 3. Telegram Verification Step
+app.post('/api/check-telegram', (req, res) => {
+  const { email } = req.body;
+  const user = users[email];
+
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  res.json({ success: true, user });
+});
+
+// 4. Main Tool Usage API (Matches popup.js calls)
+app.post('/api/use-method', (req, res) => {
   const { email } = req.body;
 
   if (globalShutdown && email !== ADMIN_EMAIL) {
-    return res.status(503).json({ error: 'System is currently down for maintenance.' });
+    return res.status(503).json({ message: 'System is currently down for maintenance.' });
   }
 
   const user = users[email];
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  if (user.banned) return res.status(403).json({ error: 'Your account is banned.' });
-  
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  if (user.banned) return res.status(403).json({ message: 'Your account is banned.' });
+
   if (user.kickedUntil && new Date() < new Date(user.kickedUntil)) {
-    return res.status(403).json({ error: `Account suspended until ${user.kickedUntil}` });
+    return res.status(403).json({ message: `Account suspended until ${user.kickedUntil}` });
   }
 
   if (user.usedToday >= user.dailyLimit && email !== ADMIN_EMAIL) {
-    return res.status(429).json({ error: 'Daily limit reached.' });
+    return res.status(429).json({ message: 'Daily limit reached.' });
   }
 
   user.usedToday += 1;
-  res.json({ success: true, remaining: user.dailyLimit - user.usedToday });
+  res.json({ success: true, usedToday: user.usedToday, remaining: user.dailyLimit - user.usedToday });
 });
 
-// 4. Admin Panel APIs
+// 5. Admin Panel APIs
 app.get('/api/admin/users', (req, res) => {
   res.json({ users: Object.values(users), globalShutdown });
 });
 
 app.post('/api/admin/set-limit', (req, res) => {
-  const { email, limit } = req.body;
-  if (users[email]) {
-    users[email].dailyLimit = parseInt(limit);
+  const { userId, limit } = req.body;
+  if (users[userId]) {
+    users[userId].dailyLimit = parseInt(limit, 10);
     return res.json({ success: true });
   }
-  res.status(404).json({ error: 'User not found' });
+  res.status(404).json({ message: 'User not found' });
+});
+
+app.post('/api/admin/kick', (req, res) => {
+  const { userId, hours } = req.body;
+  if (users[userId]) {
+    const kickDate = new Date();
+    kickDate.setHours(kickDate.getHours() + parseInt(hours, 10));
+    users[userId].kickedUntil = kickDate;
+    return res.json({ success: true });
+  }
+  res.status(404).json({ message: 'User not found' });
 });
 
 app.post('/api/admin/ban', (req, res) => {
-  const { email } = req.body;
-  if (users[email]) {
-    users[email].banned = true;
+  const { userId } = req.body;
+  if (users[userId]) {
+    users[userId].banned = true;
     return res.json({ success: true });
   }
-  res.status(404).json({ error: 'User not found' });
+  res.status(404).json({ message: 'User not found' });
 });
 
-app.post('/api/admin/toggle-shutdown', (req, res) => {
-  globalShutdown = req.body.shutdown;
+app.post('/api/admin/shutdown', (req, res) => {
+  const { status } = req.body;
+  globalShutdown = status === 'disabled';
   res.json({ success: true, globalShutdown });
 });
 
-// Start Server
-const PORT = 3000;
-app.listen(PORT, () => console.log(`Zyven Server running on http://localhost:${PORT}`));
+// Export server for Vercel Serverless
+module.exports = app;
