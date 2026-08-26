@@ -6,17 +6,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Configure Nodemailer Transporter using Vercel Environment Variables
+// Explicit SMTP Configuration for Gmail to prevent Vercel connection issues
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false, // false for port 587
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
 });
 
-const users = {};
-const otpStore = {};
+const users = {}; // Stores user info, limits, status
+const otpStore = {}; // Stores verification codes
 let globalShutdown = false;
 
 const ADMIN_EMAIL = 'zyven4163@gmail.com';
@@ -28,7 +30,7 @@ app.post('/api/send-otp', async (req, res) => {
     return res.status(400).json({ message: 'Email and TikTok username required' });
   }
 
-  // Generate 6-digit OTP
+  // Generate random 6-digit code
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   otpStore[email] = { code, username };
 
@@ -41,7 +43,7 @@ app.post('/api/send-otp', async (req, res) => {
 
   try {
     await transporter.sendMail(mailOptions);
-    console.log(`[REAL EMAIL SENT] Code sent to ${email}`);
+    console.log(`[REAL EMAIL SENT] Code ${code} sent to ${email}`);
     res.json({ message: 'OTP sent successfully to email' });
   } catch (err) {
     console.error('[EMAIL ERROR]', err);
@@ -57,6 +59,7 @@ app.post('/api/verify-otp', (req, res) => {
     const username = otpStore[email].username;
     delete otpStore[email];
 
+    // Register user if new
     if (!users[email]) {
       users[email] = {
         id: email,
@@ -148,4 +151,5 @@ app.post('/api/admin/shutdown', (req, res) => {
   res.json({ success: true, globalShutdown });
 });
 
+// Export server for Vercel Serverless
 module.exports = app;
