@@ -1,33 +1,52 @@
 const express = require('express');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Temporary In-Memory Database
-const users = {}; // Stores user info, limits, status
-const otpStore = {}; // Stores verification codes
+// Configure Nodemailer Transporter using Vercel Environment Variables
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+const users = {};
+const otpStore = {};
 let globalShutdown = false;
 
 const ADMIN_EMAIL = 'zyven4163@gmail.com';
 
-// 1. Send OTP Code
-app.post('/api/send-otp', (req, res) => {
-  // Fixed: Accepts 'username' to match popup.js
+// 1. Send OTP Code via Real Email
+app.post('/api/send-otp', async (req, res) => {
   const { email, username } = req.body;
   if (!email || !username) {
     return res.status(400).json({ message: 'Email and TikTok username required' });
   }
 
-  // Generate random 6-digit code
+  // Generate 6-digit OTP
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   otpStore[email] = { code, username };
 
-  console.log(`[OTP SENT] Email: ${email} | Username: ${username} | Code: ${code}`);
+  const mailOptions = {
+    from: `"Zyven Extension" <${process.env.EMAIL_USER}>`,
+    to: email,
+    subject: 'Your Zyven Verification Code',
+    text: `Hello ${username},\n\nYour 6-digit verification code is: ${code}\n\nIf you did not request this code, please ignore this email.`,
+  };
 
-  // Note: Vercel logs will show the printed 6-digit code for testing
-  res.json({ message: 'OTP sent successfully' });
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[REAL EMAIL SENT] Code sent to ${email}`);
+    res.json({ message: 'OTP sent successfully to email' });
+  } catch (err) {
+    console.error('[EMAIL ERROR]', err);
+    res.status(500).json({ message: 'Failed to send verification email.' });
+  }
 });
 
 // 2. Verify OTP Code
@@ -38,7 +57,6 @@ app.post('/api/verify-otp', (req, res) => {
     const username = otpStore[email].username;
     delete otpStore[email];
 
-    // Register user if new
     if (!users[email]) {
       users[email] = {
         id: email,
@@ -66,7 +84,7 @@ app.post('/api/check-telegram', (req, res) => {
   res.json({ success: true, user });
 });
 
-// 4. Main Tool Usage API (Matches popup.js calls)
+// 4. Main Tool Usage API
 app.post('/api/use-method', (req, res) => {
   const { email } = req.body;
 
@@ -130,5 +148,4 @@ app.post('/api/admin/shutdown', (req, res) => {
   res.json({ success: true, globalShutdown });
 });
 
-// Export server for Vercel Serverless
 module.exports = app;
