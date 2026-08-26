@@ -1,10 +1,8 @@
 const express = require('express');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
 
 const app = express();
 
-// Explicit CORS configuration for Chrome Extensions
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
@@ -13,81 +11,47 @@ app.use(cors({
 
 app.use(express.json());
 
-// Explicit SMTP Configuration for Gmail
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false, // false for port 587
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
-
 const users = {}; // Stores user info, limits, status
-const otpStore = {}; // Stores verification codes
 let globalShutdown = false;
 
 const ADMIN_EMAIL = 'zyven4163@gmail.com';
 
-// Root route so visiting the URL directly doesn't give a 404
+// Root route
 app.get('/', (req, res) => {
   res.json({ status: 'Zyven Backend is running successfully!' });
 });
 
-// 1. Send OTP Code via Real Email
+// 1. Direct Login / Bypass OTP (Instantly logs in using TikTok username & email)
 app.post('/api/send-otp', async (req, res) => {
   const { email, username } = req.body;
   if (!email || !username) {
     return res.status(400).json({ message: 'Email and TikTok username required' });
   }
 
-  // Generate random 6-digit code
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  otpStore[email] = { code, username };
-
-  const mailOptions = {
-    from: `"Zyven Extension" <${process.env.EMAIL_USER}>`,
-    to: email,
-    subject: 'Your Zyven Verification Code',
-    text: `Hello ${username},\n\nYour 6-digit verification code is: ${code}\n\nIf you did not request this code, please ignore this email.`,
-  };
-
-  try {
-    await transporter.sendMail(mailOptions);
-    console.log(`[REAL EMAIL SENT] Code ${code} sent to ${email}`);
-    res.json({ message: 'OTP sent successfully to email' });
-  } catch (err) {
-    console.error('[EMAIL ERROR]', err);
-    res.status(500).json({ message: 'Failed to send verification email.' });
+  // Register or fetch user immediately without sending an email
+  if (!users[email]) {
+    users[email] = {
+      id: email,
+      email,
+      username: username || 'User',
+      dailyLimit: 5,
+      usedToday: 0,
+      banned: false,
+      kickedUntil: null
+    };
   }
+
+  console.log(`[DIRECT LOGIN] User ${username} (${email}) logged in successfully.`);
+  res.json({ message: 'Logged in successfully', success: true, user: users[email] });
 });
 
-// 2. Verify OTP Code
+// 2. Verify OTP Endpoint (Kept just in case your frontend still calls it, instantly succeeds)
 app.post('/api/verify-otp', (req, res) => {
-  const { email, code } = req.body;
-
-  if (otpStore[email] && otpStore[email].code === code) {
-    const username = otpStore[email].username;
-    delete otpStore[email];
-
-    // Register user if new
-    if (!users[email]) {
-      users[email] = {
-        id: email,
-        email,
-        username: username || 'User',
-        dailyLimit: 5,
-        usedToday: 0,
-        banned: false,
-        kickedUntil: null
-      };
-    }
-
+  const { email } = req.body;
+  if (users[email]) {
     return res.json({ success: true, user: users[email] });
   }
-
-  res.status(400).json({ message: 'Invalid verification code' });
+  res.status(400).json({ message: 'User not found, please login again' });
 });
 
 // 3. Telegram Verification Step
@@ -163,5 +127,4 @@ app.post('/api/admin/shutdown', (req, res) => {
   res.json({ success: true, globalShutdown });
 });
 
-// Export server for Vercel Serverless
 module.exports = app;
