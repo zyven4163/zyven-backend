@@ -3,10 +3,17 @@ const cors = require('cors');
 const nodemailer = require('nodemailer');
 
 const app = express();
-app.use(cors());
+
+// Explicit CORS configuration for Chrome Extensions
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
-// Explicit SMTP Configuration for Gmail to prevent Vercel connection issues
+// Explicit SMTP Configuration for Gmail
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 587,
@@ -22,6 +29,11 @@ const otpStore = {}; // Stores verification codes
 let globalShutdown = false;
 
 const ADMIN_EMAIL = 'zyven4163@gmail.com';
+
+// Root route so visiting the URL directly doesn't give a 404
+app.get('/', (req, res) => {
+  res.json({ status: 'Zyven Backend is running successfully!' });
+});
 
 // 1. Send OTP Code via Real Email
 app.post('/api/send-otp', async (req, res) => {
